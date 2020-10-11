@@ -18,6 +18,27 @@ import {
   UnconfirmedUpgrade,
 } from '../_types/darkforest/api/ContractsAPITypes';
 
+export function mapJSONeplacer(key, value) {
+  const originalObject = this[key];
+  if (originalObject instanceof Map) {
+    return {
+      dataType: 'Map',
+      value: Array.from(originalObject.entries()), // or with spread: value: [...originalObject]
+    };
+  } else {
+    return value;
+  }
+}
+
+export function mapJSONreviver(key, value) {
+  if (typeof value === 'object' && value !== null) {
+    if (value.dataType === 'Map') {
+      return new Map(value.value);
+    }
+  }
+  return value;
+}
+
 export const ONE_DAY = 24 * 60 * 60 * 1000;
 
 type NestedBigIntArray = (BigInteger | string | NestedBigIntArray)[];
@@ -180,10 +201,10 @@ export const titleCase = (title: string): string =>
 export const randomAddress = (): string => {
   return address(
     '0x' +
-      _.join(
-        _.times(40, () => _.random(0, 15).toString(16)),
-        ''
-      )
+    _.join(
+      _.times(40, () => _.random(0, 15).toString(16)),
+      ''
+    )
   );
 };
 
@@ -254,7 +275,7 @@ export const aggregateBulkGetter = async <T>(
               if (
                 printProgress &&
                 Math.floor((soFar * 20) / total) !==
-                  Math.floor(((soFar + querySize) * 20) / total)
+                Math.floor(((soFar + querySize) * 20) / total)
               ) {
                 // print every 5%
                 let percent =

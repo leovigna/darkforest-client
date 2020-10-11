@@ -26,21 +26,29 @@ const contractAddress = isProd
   ? require('../utils/prod_contract_addr').contractAddress
   : require('../utils/local_contract_addr').contractAddress;
 
-enum ObjectStore {
+export enum ObjectStore {
   DEFAULT = 'default',
   BOARD = 'knownBoard',
   UNCONFIRMED_ETH_TXS = 'unminedEthTxs',
+  PLANETS = 'planets'
 }
 
 enum DBActionType {
   UPDATE,
   DELETE,
+  READ
 }
 
 interface DBAction {
   type: DBActionType;
   dbKey: string;
   dbValue?: ExploredChunkData;
+}
+
+interface DBActionAny {
+  type: DBActionType;
+  key: string;
+  value?: any;
 }
 
 type DBTx = DBAction[];
@@ -71,11 +79,15 @@ class LocalStorageManager implements ChunkStore {
   }
 
   static async create(account: EthAddress): Promise<LocalStorageManager> {
-    const db = await openDB(`darkforest-${contractAddress}-${account}`, 1, {
+    const db = await openDB(`darkforest-${contractAddress}-${account}`, 2, {
       upgrade(db) {
-        db.createObjectStore(ObjectStore.DEFAULT);
-        db.createObjectStore(ObjectStore.BOARD);
-        db.createObjectStore(ObjectStore.UNCONFIRMED_ETH_TXS);
+        if (db.version == 1) {
+          db.createObjectStore(ObjectStore.DEFAULT);
+          db.createObjectStore(ObjectStore.BOARD);
+          db.createObjectStore(ObjectStore.UNCONFIRMED_ETH_TXS);
+        } else if (db.version == 2) {
+          db.createObjectStore(ObjectStore.PLANETS)
+        }
       },
     });
     const localStorageManager = new LocalStorageManager(db, account);
@@ -98,6 +110,35 @@ class LocalStorageManager implements ChunkStore {
       value,
       `${contractAddress}-${this.account}-${key}`
     );
+  }
+
+  async getValueForKey(key: string, collection: ObjectStore): Promise<any | null | undefined> {
+    return await this.db.get(
+      collection,
+      key
+    );
+  }
+
+  async setValueForKey(key: string, value: any, collection: ObjectStore): Promise<void> {
+    await this.db.put(
+      collection,
+      value,
+      key
+    );
+  }
+
+  async bulkActions(actions: DBActionAny[], collection: ObjectStore): Promise<void> {
+    const tx = this.db.transaction(collection, 'readwrite');
+    for (let action of actions) {
+      if (action.type === DBActionType.UPDATE) {
+        tx.store.put(action.value, action.key);
+      } else if (action.type === DBActionType.DELETE) {
+        tx.store.delete(action.key);
+      } else if (action.type === DBActionType.READ) {
+        tx.store.get(action.key);
+      }
+    }
+    await tx.done;
   }
 
   private async bulkSetKeyInCollection(

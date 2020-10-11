@@ -9,6 +9,7 @@ import {
   Planet,
   Upgrade,
   SpaceType,
+  LocationId,
 } from '../_types/global/GlobalTypes';
 // NOTE: DO NOT IMPORT FROM ETHERS SUBPATHS. see https://github.com/ethers-io/ethers.js/issues/349 (these imports trip up webpack)
 // in particular, the below is bad!
@@ -59,12 +60,14 @@ import {
   SubmittedBuyHat,
   UnconfirmedBuyHat,
 } from '../_types/darkforest/api/ContractsAPITypes';
-import { aggregateBulkGetter, hexifyBigIntNestedArray } from '../utils/Utils';
+import { aggregateBulkGetter, hexifyBigIntNestedArray, mapJSONeplacer, mapJSONreviver } from '../utils/Utils';
 import TerminalEmitter, { TerminalTextStyle } from '../utils/TerminalEmitter';
 import EthereumAccountManager from './EthereumAccountManager';
 import NotificationManager from '../utils/NotificationManager';
 import { BLOCK_EXPLORER_URL } from '../utils/constants';
 import bigInt from 'big-integer';
+import LocalStorageManager, { ObjectStore } from './LocalStorageManager';
+import { collapseTextChangeRangesAcrossMultipleVersions } from 'typescript';
 
 export function isUnconfirmedInit(tx: UnconfirmedTx): tx is UnconfirmedInit {
   return tx.type === EthTxType.INIT;
@@ -753,7 +756,7 @@ class ContractsAPI extends EventEmitter {
     return _.flatten(arrivalsUnflattened);
   }
 
-  async getPlanets(): Promise<PlanetMap> {
+  async getPlanets(localStorageManager: LocalStorageManager): Promise<PlanetMap> {
     console.log('getting planets');
     const contract = this.coreContract;
     const terminalEmitter = TerminalEmitter.getInstance();
@@ -766,36 +769,71 @@ class ContractsAPI extends EventEmitter {
       async (start, end) => await contract.bulkGetPlanetIds(start, end),
       true
     );
-    terminalEmitter.println('(5/6) Getting planet metadata...');
-    const rawPlanetsExtendedInfo = await aggregateBulkGetter<
-      RawPlanetExtendedInfo
-    >(
-      nPlanets,
-      1000,
-      async (start, end) =>
-        await contract.bulkGetPlanetsExtendedInfo(start, end),
-      true
-    );
-    terminalEmitter.println('(6/6) Getting planet data...');
-    const rawPlanets = await aggregateBulkGetter<RawPlanetData>(
-      nPlanets,
-      1000,
-      async (start, end) => await contract.bulkGetPlanets(start, end),
-      true
-    );
 
-    const planets: PlanetMap = new Map();
-    for (let i = 0; i < nPlanets; i += 1) {
-      if (!!rawPlanets[i] && !!rawPlanetsExtendedInfo[i]) {
-        const planet = this.rawPlanetToObject(
-          planetIds[i].toString(),
-          rawPlanets[i],
-          rawPlanetsExtendedInfo[i]
-        );
-        planets.set(planet.locationId, planet);
+    const planetLocationIds: LocationId[] = planetIds.map((p) => locationIdFromDecStr(p.toString()))
+    const cacheMap = await this.getPlanetMapCache(planetLocationIds, localStorageManager)
+    terminalEmitter.println(`Cache has ${cacheMap.size}/${nPlanets} planets...`);
+    if (cacheMap.size >= nPlanets - 1000) {
+      terminalEmitter.println('(5/6) Getting planet metadata...');
+      terminalEmitter.println('(6/6) Getting planet data...');
+      return cacheMap
+    } else {
+      terminalEmitter.println('(5/6) Getting planet metadata...');
+      const rawPlanetsExtendedInfo = await aggregateBulkGetter<
+        RawPlanetExtendedInfo
+      >(
+        nPlanets,
+        1000,
+        async (start, end) =>
+          await contract.bulkGetPlanetsExtendedInfo(start, end),
+        true
+      );
+      terminalEmitter.println('(6/6) Getting planet data...');
+      const rawPlanets = await aggregateBulkGetter<RawPlanetData>(
+        nPlanets,
+        1000,
+        async (start, end) => await contract.bulkGetPlanets(start, end),
+        true
+      );
+
+      const planets: PlanetMap = new Map();
+      for (let i = 0; i < nPlanets; i += 1) {
+        if (!!rawPlanets[i] && !!rawPlanetsExtendedInfo[i]) {
+          const planet = this.rawPlanetToObject(
+            planetIds[i].toString(),
+            rawPlanets[i],
+            rawPlanetsExtendedInfo[i]
+          );
+          planets.set(planet.locationId, planet);
+        }
+      }
+
+      terminalEmitter.println('Bonus: Setting planet map to local indexedDB...');
+      await this.setPlanetMapCache(planets, localStorageManager)
+      return planets;
+    }
+  }
+
+  async setPlanetMapCache(planetMap: PlanetMap, localStorageManager: LocalStorageManager) {
+    for (let [locationId, planet] of planetMap) {
+      await localStorageManager.setValueForKey(locationId.toString(), planet, ObjectStore.PLANETS)
+    }
+  }
+
+  async getPlanetMapCache(locationIds: LocationId[], localStorageManager: LocalStorageManager): Promise<PlanetMap> {
+    const planetMap: PlanetMap = new Map<LocationId, Planet>()
+    for (let locationId of locationIds) {
+      try {
+        const planet: Planet = await localStorageManager.getValueForKey(locationId, ObjectStore.PLANETS)
+        if (!!planet) {
+          planetMap.set(planet.locationId, planet)
+        }
+      } catch (error) {
+        //Silence error key not found
       }
     }
-    return planets;
+
+    return planetMap
   }
 
   private async getPlanet(rawLoc: EthersBN): Promise<Planet> {

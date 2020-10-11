@@ -43,6 +43,7 @@ import {
   SubmittedTx,
   UnconfirmedBuyHat,
   UnconfirmedInit,
+  MoveSnarkArgs,
 } from '../_types/darkforest/api/ContractsAPITypes';
 import perlin from '../miner/perlin';
 import { PlanetHelper } from './PlanetHelper';
@@ -189,7 +190,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     const allArrivals = await contractsAPI.getAllArrivals();
     // fetch planets after allArrivals, since an arrival to a new planet might be sent
     // while we are fetching
-    const planets = await contractsAPI.getPlanets();
+    const planets = await contractsAPI.getPlanets(localStorageManager);
     planets.forEach((planet, locId) => {
       if (planets.has(locId)) {
         planetVoyageIdMap[locId] = [];
@@ -197,6 +198,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     });
 
     for (const arrival of allArrivals) {
+      if (!planetVoyageIdMap[arrival.toPlanet]) planetVoyageIdMap[arrival.toPlanet] = [];
       planetVoyageIdMap[arrival.toPlanet].push(arrival.eventId);
       arrivals[arrival.eventId] = arrival;
     }
@@ -783,6 +785,202 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     return this;
   }
 
+  async moveAsync(
+    from: LocationId,
+    to: LocationId,
+    forces: number,
+    silver: number
+  ) {
+    localStorage.setItem(
+      `${this.getAccount()?.toLowerCase()}-fromPlanet`,
+      from
+    );
+    localStorage.setItem(`${this.getAccount()?.toLowerCase()}-toPlanet`, to);
+
+    if (Date.now() / 1000 > this.endTimeSeconds) {
+      const terminalEmitter = TerminalEmitter.getInstance();
+      terminalEmitter.println('[ERROR] Game has ended.');
+      return this;
+    }
+
+    const oldLocation = this.planetHelper.getLocationOfPlanet(from);
+    const newLocation = this.planetHelper.getLocationOfPlanet(to);
+    if (!oldLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+    if (!newLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+
+    const oldX = oldLocation.coords.x;
+    const oldY = oldLocation.coords.y;
+    const newX = newLocation.coords.x;
+    const newY = newLocation.coords.y;
+    const xDiff = newX - oldX;
+    const yDiff = newY - oldY;
+
+    const distMax = Math.ceil(Math.sqrt(xDiff ** 2 + yDiff ** 2));
+
+    const shipsMoved = forces;
+    const silverMoved = silver;
+
+    if (newX ** 2 + newY ** 2 >= this.worldRadius ** 2) {
+      throw new Error('attempted to move out of bounds');
+    }
+
+    const oldPlanet = this.planetHelper.getPlanetWithLocation(oldLocation);
+
+    if (!this.account || !oldPlanet || oldPlanet.owner !== this.account) {
+      throw new Error('attempted to move from a planet not owned by player');
+    }
+    const actionId = getRandomActionId();
+    const unconfirmedTx = {
+      actionId,
+      type: EthTxType.MOVE,
+      from: oldLocation.hash,
+      to: newLocation.hash,
+      forces: shipsMoved,
+      silver: silverMoved,
+    };
+    this.contractsAPI.onTxInit(unconfirmedTx as UnconfirmedTx);
+
+    try {
+      const callArgs = await this.snarkHelper
+        .getMoveArgs(
+          oldX,
+          oldY,
+          newX,
+          newY,
+          perlin({ x: newX, y: newY }),
+          this.worldRadius,
+          distMax
+        )
+
+      await this.contractsAPI.move(
+        callArgs,
+        shipsMoved,
+        silverMoved,
+        actionId
+      );
+
+      this.emit(GameManagerEvent.Moved);
+    } catch (err) {
+      const notifManager = NotificationManager.getInstance();
+      notifManager.unsubmittedTxFail(unconfirmedTx, err);
+      this.contractsAPI.emit(
+        ContractsAPIEvent.TxInitFailed,
+        unconfirmedTx,
+        err
+      );
+    }
+  }
+
+  async moveComputeArgs(
+    from: LocationId,
+    to: LocationId,
+    forces: number,
+    silver: number
+  ): Promise<MoveSnarkArgs | undefined> {
+    if (Date.now() / 1000 > this.endTimeSeconds) {
+      const terminalEmitter = TerminalEmitter.getInstance();
+      terminalEmitter.println('[ERROR] Game has ended.');
+      return;
+    }
+
+    const oldLocation = this.planetHelper.getLocationOfPlanet(from);
+    const newLocation = this.planetHelper.getLocationOfPlanet(to);
+    if (!oldLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+    if (!newLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+
+    const oldX = oldLocation.coords.x;
+    const oldY = oldLocation.coords.y;
+    const newX = newLocation.coords.x;
+    const newY = newLocation.coords.y;
+    const xDiff = newX - oldX;
+    const yDiff = newY - oldY;
+
+    const distMax = Math.ceil(Math.sqrt(xDiff ** 2 + yDiff ** 2));
+
+    if (newX ** 2 + newY ** 2 >= this.worldRadius ** 2) {
+      throw new Error('attempted to move out of bounds');
+    }
+
+    const oldPlanet = this.planetHelper.getPlanetWithLocation(oldLocation);
+
+    if (!this.account || !oldPlanet || oldPlanet.owner !== this.account) {
+      throw new Error('attempted to move from a planet not owned by player');
+    }
+
+    const callArgs = this.snarkHelper
+      .getMoveArgs(
+        oldX,
+        oldY,
+        newX,
+        newY,
+        perlin({ x: newX, y: newY }),
+        this.worldRadius,
+        distMax
+      )
+
+    return callArgs
+  }
+
+  async moveExecute(
+    from: LocationId,
+    to: LocationId,
+    forces: number,
+    silver: number,
+    callArgs: MoveSnarkArgs
+  ) {
+    const oldLocation = this.planetHelper.getLocationOfPlanet(from);
+    const newLocation = this.planetHelper.getLocationOfPlanet(to);
+    if (!oldLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+    if (!newLocation) {
+      console.error('tried to move from planet that does not exist');
+      return;
+    }
+
+    const actionId = getRandomActionId();
+    const unconfirmedTx = {
+      actionId,
+      type: EthTxType.MOVE,
+      from: oldLocation.hash,
+      to: newLocation.hash,
+      forces,
+      silver,
+    };
+
+    try {
+      await this.contractsAPI.move(
+        callArgs,
+        forces,
+        silver,
+        actionId
+      );
+
+      this.emit(GameManagerEvent.Moved);
+    } catch (err) {
+      const notifManager = NotificationManager.getInstance();
+      notifManager.unsubmittedTxFail(unconfirmedTx, err);
+      this.contractsAPI.emit(
+        ContractsAPIEvent.TxInitFailed,
+        unconfirmedTx,
+        err
+      );
+    }
+  }
+
   upgrade(planetId: LocationId, branch: number): GameManager {
     // this is shitty
     localStorage.setItem(
@@ -1083,18 +1281,19 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     }
   }
 
-  allocateSilverWithId(silverPlanetId: LocationId, rangePercent: number) {
+  async allocateSilverWithId(silverPlanetId: LocationId, rangePercent: number) {
     const silverPlanet = this.getPlanetWithId(silverPlanetId)
 
     if (!silverPlanet) throw new Error('silverPlanet planet unknown');
-    this.allocateSilver(silverPlanet, rangePercent)
+    await this.allocateSilver(silverPlanet, rangePercent)
   }
 
-  allocateSilver(silverPlanet: Planet, rangePercent: number) {
+  async allocateSilver(silverPlanet: Planet, rangePercent: number) {
     const terminalEmitter = TerminalEmitter.getInstance();
 
     const targetPlanets = this.getPlanetsInRange(silverPlanet.locationId, rangePercent)
       .filter((planet) => planet.owner === this.account)
+      .filter((planet) => planet.planetResource != PlanetResource.SILVER)
       .filter((planet) => planet.planetLevel == silverPlanet.planetLevel)
       .filter((planet) => planet.silver < planet.silverCap)
 
@@ -1103,22 +1302,31 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
     let silver = silverPlanet.silver
     let energy = silverPlanet.energy
+    const moveExecuteArgs: [LocationId, LocationId, number, number, MoveSnarkArgs][] = []
     for (let targetPlanet of targetPlanets) {
       if (silver > 0 && energy > 0) {
         const silverDeficit = targetPlanet.silverCap - targetPlanet.silver
-        const silverSent = Math.floor(Math.min(silver, silverDeficit))
-        const energySent = this.getEnergyNeededForMove(silverPlanet.locationId, targetPlanet.locationId, 1)
+        const silverSent = Math.ceil(Math.min(silver, silverDeficit))
+        const energySent = Math.ceil(this.getEnergyNeededForMove(silverPlanet.locationId, targetPlanet.locationId, 1) * 1.1)
         if (energy >= energySent && silverSent > 0) {
           silver -= silverSent
           energy -= energySent
           terminalEmitter.println(`${silverSent} silver sent to ${targetPlanet.locationId} for ${energySent} energy. ${silver}/${silverDeficit}`, TerminalTextStyle.Green)
-          this.move(silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent)
+          //await this.moveAsync(silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent)
+          const callArgs = await this.moveComputeArgs(silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent)
+
+          if (!!callArgs) {
+            moveExecuteArgs.push([silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent, callArgs])
+          }
         }
       }
     }
+
+    const moveExecutePromises = moveExecuteArgs.map((args) => this.moveExecute(...args))
+    await Promise.all(moveExecutePromises)
   }
 
-  allocateSilverAll(rangePercent: number) {
+  async allocateSilverAll(rangePercent: number) {
     const terminalEmitter = TerminalEmitter.getInstance();
     const mySilverPlanets = this.getMyPlanetsFiltered({ planetResource: PlanetResource.SILVER })
       .filter((planet) => planet.silver == planet.silverCap)
@@ -1126,7 +1334,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     terminalEmitter.println(`Upgrade bot checking ${mySilverPlanets.length} silver planets...${mySilverPlanets.length === 0 ? ' no luck\n' : '\n'}`)
 
     for (let silverPlanet of mySilverPlanets) {
-      this.allocateSilver(silverPlanet, rangePercent)
+      await this.allocateSilver(silverPlanet, rangePercent)
     }
   }
 
