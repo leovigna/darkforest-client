@@ -774,8 +774,22 @@ class ContractsAPI extends EventEmitter {
     const cacheMap = await this.getPlanetMapCache(planetLocationIds, localStorageManager)
     terminalEmitter.println(`Cache has ${cacheMap.size}/${nPlanets} planets...`);
     if (cacheMap.size >= nPlanets - 1000) {
-      terminalEmitter.println('(5/6) Getting planet metadata...');
-      terminalEmitter.println('(6/6) Getting planet data...');
+      terminalEmitter.println('(5/6) Loading planet data from cache..');
+      terminalEmitter.println('(6/6) Fetching player owned planet data...');
+
+      const ownedPlanetsPromise: Promise<Planet>[] = []
+
+      for (let [_, planet] of cacheMap) {
+        if (planet.owner == this.account) {
+          ownedPlanetsPromise.push(this.getPlanet(locationIdToBigNumber(planet.locationId)));
+        }
+      }
+
+      const ownedPlanets = await Promise.all(ownedPlanetsPromise)
+      for (let planet of ownedPlanets) {
+        cacheMap.set(planet.locationId, planet)
+      }
+
       return cacheMap
     } else {
       terminalEmitter.println('(5/6) Getting planet metadata...');
