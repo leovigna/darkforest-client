@@ -15,6 +15,8 @@ import {
   Upgrade,
   ChunkFootprint,
   SpaceType,
+  UpgradeBranchName,
+  PlanetResource,
 } from '../_types/global/GlobalTypes';
 import LocalStorageManager from './LocalStorageManager';
 import { MIN_CHUNK_SIZE } from '../utils/constants';
@@ -28,7 +30,7 @@ import SnarkHelper from './SnarkArgsHelper';
 import { WorldCoords } from '../utils/Coordinates';
 import _ from 'lodash';
 
-import { SpiralPattern, MiningPattern } from '../utils/MiningPatterns';
+import { SpiralPattern, MiningPattern, CheesePattern } from '../utils/MiningPatterns';
 import AbstractGameManager from './AbstractGameManager';
 import {
   ContractConstants,
@@ -60,7 +62,7 @@ export enum GameManagerEvent {
 import TerminalEmitter, { TerminalTextStyle } from '../utils/TerminalEmitter';
 import { getAllTwitters, verifyTwitterHandle } from './UtilityServerAPI';
 import EthereumAccountManager from './EthereumAccountManager';
-import { getRandomActionId, moveShipsDecay } from '../utils/Utils';
+import { getRandomActionId, hasOwner, moveShipsDecay } from '../utils/Utils';
 import NotificationManager from '../utils/NotificationManager';
 
 class GameManager extends EventEmitter implements AbstractGameManager {
@@ -655,8 +657,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
           minedChunksCount++;
           if (minedChunksCount % 8 === 0) {
             terminalEmitter.println(
-              `Hashed ${
-                minedChunksCount * MIN_CHUNK_SIZE ** 2
+              `Hashed ${minedChunksCount * MIN_CHUNK_SIZE ** 2
               } potential home planets...`
             );
           }
@@ -941,8 +942,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
   }
 
   getEnergyArrivingForMove(
-    fromId: LocationId,
-    toId: LocationId,
+    fromId: LocationId, toId: LocationId,
     sentEnergy: number
   ) {
     const from = this.getPlanetWithId(fromId);
@@ -962,6 +962,189 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     const p = perlin(coords, false);
     return (16 - p) * 16;
   }
+
+  // Custom
+  // Filtering
+  getMyPlanetsFiltered(filter: {
+    planetResource?: PlanetResource,
+    planetLevel?: PlanetLevel
+  }) {
+    let myPlanets = this.getMyPlanets()
+    if (filter.planetResource != undefined) {
+      myPlanets = myPlanets.filter((p) => p.planetResource == filter.planetResource)
+    }
+    if (filter.planetLevel != undefined) {
+      myPlanets.filter((p) => p.planetLevel == filter.planetLevel)
+    }
+
+    return myPlanets
+  }
+
+  // Expansion management
+  expandWithId(planetId: LocationId, rangePercent: number) {
+    const planet = this.getPlanetWithId(planetId)
+
+    if (!planet) throw new Error('planet unknown');
+    this.expand(planet, rangePercent)
+  }
+
+  expand(planet: Planet, rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+
+    const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
+      .filter((p) => !hasOwner(p))
+      .filter((p) => p.planetLevel == planet.planetLevel)
+
+    terminalEmitter.println(`Expanding territory for L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`${targetPlanets.length} target planets for expansion\n`)
+
+    let energy = planet.energy
+    for (let targetPlanet of targetPlanets) {
+      if (energy > 0) {
+        const energySent = this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, targetPlanet.energy * 2 + 1)
+        if (energy >= energySent) {
+          energy -= energySent
+          terminalEmitter.println(`Sent ${energySent} to ${targetPlanet.locationId}. ${energy}/${planet.energyCap}`)
+          this.move(planet.locationId, targetPlanet.locationId, energySent, 0)
+        }
+      }
+    }
+  }
+
+  expandAll(rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+    const myPlanets = this.getMyPlanets()
+
+    terminalEmitter.println(`Expanding ${myPlanets.length} planets.\n`)
+
+    for (let planet of myPlanets) {
+      this.expand(planet, rangePercent)
+    }
+  }
+
+  // Energy management
+  sinkEnergyWithId(planetId: LocationId, rangePercent: number) {
+    const planet = this.getPlanetWithId(planetId)
+
+    if (!planet) throw new Error('planet unknown');
+    this.sinkEnergy(planet, rangePercent)
+  }
+
+  sinkEnergy(planet: Planet, rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+
+    const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
+      .filter((p) => p.owner === this.account)
+      .filter((p) => p.planetLevel == planet.planetLevel - 1)
+      .filter((p) => p.energy == p.energyCap)
+
+
+    terminalEmitter.println(`Sinking energy for L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`${targetPlanets.length} target planets for energy sink\n`)
+
+    let energy = planet.energy
+    for (let targetPlanet of targetPlanets) {
+      const energyDeficit = planet.energyCap - energy
+      const energySent = Math.min(targetPlanet.energy)
+      if (energyDeficit > 0) {
+        const energyMaxSent = this.getEnergyNeededForMove(targetPlanet.locationId, planet.locationId, energyDeficit)
+        const energySent = Math.min(targetPlanet.energy, energyMaxSent)
+        const arrivingEnergy = this.getEnergyArrivingForMove(targetPlanet.locationId, planet.locationId, energySent)
+        if (arrivingEnergy > 0) {
+          energy += arrivingEnergy
+          terminalEmitter.println(`Receiving ${arrivingEnergy} energy from ${targetPlanet.locationId}. ${energy}/${planet.energyCap}`)
+          this.move(targetPlanet.locationId, planet.locationId, energySent, 0)
+        }
+      }
+    }
+  }
+
+  sinkEnergyAll(rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+    const myPlanets = this.getMyPlanets()
+
+    terminalEmitter.println(`Expanding ${myPlanets.length} planets.\n`)
+
+    for (let planet of myPlanets) {
+      this.sinkEnergy(planet, rangePercent)
+    }
+  }
+
+  // Silver management
+  autoUpgrade(branch: UpgradeBranchName) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+    const myPlanets = this.getMyPlanets()
+    //@ts-ignore
+    const upgradeablePs = myPlanets.filter(p => this.planetHelper.planetCanUpgrade(p))
+    terminalEmitter.println(`Upgrade bot checking ${myPlanets.length} planets...${upgradeablePs.length === 0 ? ' no luck\n' : '\n'}`)
+    for (let p of upgradeablePs) {
+      terminalEmitter.println(`Upgrading L${p.planetLevel} ${p.locationId}\n`, TerminalTextStyle.Green)
+      this.upgrade(p.locationId, branch)
+    }
+  }
+
+  allocateSilverWithId(silverPlanetId: LocationId, rangePercent: number) {
+    const silverPlanet = this.getPlanetWithId(silverPlanetId)
+
+    if (!silverPlanet) throw new Error('silverPlanet planet unknown');
+    this.allocateSilver(silverPlanet, rangePercent)
+  }
+
+  allocateSilver(silverPlanet: Planet, rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+
+    const targetPlanets = this.getPlanetsInRange(silverPlanet.locationId, rangePercent)
+      .filter((planet) => planet.owner === this.account)
+      .filter((planet) => planet.planetLevel == silverPlanet.planetLevel)
+      .filter((planet) => planet.silver < planet.silverCap)
+
+    terminalEmitter.println(`Allocating silver for L${silverPlanet.planetLevel} ${silverPlanet.locationId} with ${silverPlanet.silver}/${silverPlanet.silverCap} silver\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`${targetPlanets.length} target planets for silver allocation\n`)
+
+    let silver = silverPlanet.silver
+    let energy = silverPlanet.energy
+    for (let targetPlanet of targetPlanets) {
+      if (silver > 0 && energy > 0) {
+        const silverDeficit = targetPlanet.silverCap - targetPlanet.silver
+        const silverSent = Math.floor(Math.min(silver, silverDeficit))
+        const energySent = this.getEnergyNeededForMove(silverPlanet.locationId, targetPlanet.locationId, 1)
+        if (energy >= energySent && silverSent > 0) {
+          silver -= silverSent
+          energy -= energySent
+          terminalEmitter.println(`${silverSent} silver sent to ${targetPlanet.locationId} for ${energySent} energy. ${silver}/${silverDeficit}`, TerminalTextStyle.Green)
+          this.move(silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent)
+        }
+      }
+    }
+  }
+
+  allocateSilverAll(rangePercent: number) {
+    const terminalEmitter = TerminalEmitter.getInstance();
+    const mySilverPlanets = this.getMyPlanetsFiltered({ planetResource: PlanetResource.SILVER })
+      .filter((planet) => planet.silver == planet.silverCap)
+
+    terminalEmitter.println(`Upgrade bot checking ${mySilverPlanets.length} silver planets...${mySilverPlanets.length === 0 ? ' no luck\n' : '\n'}`)
+
+    for (let silverPlanet of mySilverPlanets) {
+      this.allocateSilver(silverPlanet, rangePercent)
+    }
+  }
+
+  // Mining
+  setMiningSpiralPattern(center: WorldCoords, chunkSize: number): void {
+    const pattern = new SpiralPattern(center, chunkSize)
+    if (this.minerManager) {
+      this.minerManager.setMiningPattern(pattern);
+    }
+  }
+
+  setMiningCheesePattern(center: WorldCoords, chunkSize: number, deltaMultiplier: number): void {
+    const pattern = new CheesePattern(center, chunkSize, deltaMultiplier)
+    if (this.minerManager) {
+      this.minerManager.setMiningPattern(pattern);
+    }
+  }
 }
+
 
 export default GameManager;
