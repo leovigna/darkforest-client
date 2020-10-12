@@ -31,7 +31,7 @@ import SnarkHelper from './SnarkArgsHelper';
 import { WorldCoords } from '../utils/Coordinates';
 import _ from 'lodash';
 
-import { SpiralPattern, MiningPattern, CheesePattern } from '../utils/MiningPatterns';
+import { SpiralPattern, MiningPattern, CheesePattern, TempPattern } from '../utils/MiningPatterns';
 import AbstractGameManager from './AbstractGameManager';
 import {
   ContractConstants,
@@ -1429,6 +1429,17 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
   setMiningCheesePattern(center: WorldCoords, chunkSize: number, deltaMultiplier: number): void {
     const pattern = new CheesePattern(center, chunkSize, deltaMultiplier)
+    if (this.minerManager) {
+      this.minerManager.setMiningPattern(pattern);
+    }
+  }
+
+  getTempPattern(): TempPattern {
+    return new TempPattern(this.localStorageManager)
+  }
+
+  setMiningTempPattern(): void {
+    const pattern = new TempPattern(this.localStorageManager)
     if (this.minerManager) {
       this.minerManager.setMiningPattern(pattern);
     }

@@ -219,7 +219,7 @@ class LocalStorageManager implements ChunkStore {
     return !!this.chunkMap.get(getChunkKey(chunkLoc));
   }
 
-  private getChunkById(chunkId: string): ExploredChunkData | null {
+  getChunkById(chunkId: string): ExploredChunkData | null {
     return this.chunkMap.get(chunkId) || null;
   }
 

@@ -1,3 +1,4 @@
+import perlin from '../miner/perlin';
 import {
   LSMBucket,
   LSMChunkData,
@@ -176,3 +177,8 @@ export const addToChunkMap = (
     map.set(getChunkKey(chunkToAdd.chunkFootprint), chunkToAdd);
   }
 };
+
+export function getTemperature(chunk: ChunkFootprint): number {
+  const p = perlin(chunk.bottomLeft, false);
+  return (16 - p) * 16;
+}

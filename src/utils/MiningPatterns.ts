@@ -1,4 +1,8 @@
+import { ThemeConsumer } from 'styled-components';
+import { textChangeRangeIsUnchanged } from 'typescript';
+import LocalStorageManager from '../api/LocalStorageManager';
 import { ChunkFootprint } from '../_types/global/GlobalTypes';
+import { getChunkKey, getSiblingLocations, getTemperature } from './ChunkUtils';
 import { WorldCoords } from './Coordinates';
 
 export enum MiningPatternType {
@@ -8,7 +12,10 @@ export enum MiningPatternType {
   Cone,
   Grid,
   ETH,
-  Cheese
+  Cheese,
+  List,
+  Neighbor,
+  Temp,
 }
 
 export interface MiningPattern {
@@ -76,7 +83,7 @@ export class SpiralPattern implements MiningPattern {
 }
 
 export class CheesePattern implements MiningPattern {
-  type: MiningPatternType = MiningPatternType.Spiral;
+  type: MiningPatternType = MiningPatternType.Cheese;
   fromChunk: ChunkFootprint;
   chunkSideLength: number;
   deltaMultiplier: number
@@ -127,5 +134,110 @@ export class CheesePattern implements MiningPattern {
       bottomLeft: nextBottomLeft,
       sideLength: this.chunkSideLength,
     };
+  }
+}
+
+export class ListPattern implements MiningPattern {
+  type: MiningPatternType = MiningPatternType.List;
+  fromChunk: ChunkFootprint;
+  chunks: ChunkFootprint[];
+  chunkIndex = 0
+
+  constructor(chunks: ChunkFootprint[], localStorageManager: LocalStorageManager) {
+    this.fromChunk = chunks[0]
+
+    const chunkKeySet = new Set()
+    this.chunks = []
+    for (let c of chunks) {
+      const chunkKey = getChunkKey(c)
+      if (chunkKeySet.has(chunkKey)) continue;
+      chunkKeySet.add(chunkKey)
+
+      if (localStorageManager.getChunkById(chunkKey) == null) this.chunks.push(c)
+    }
+
+  }
+
+  nextChunk(chunk: ChunkFootprint): ChunkFootprint {
+    this.chunkIndex++
+    if (this.chunkIndex < this.chunks.length) return this.chunks[this.chunkIndex]
+
+    return this.fromChunk
+  }
+}
+
+export class NeighborPattern implements MiningPattern {
+  type: MiningPatternType = MiningPatternType.Neighbor;
+  fromChunk: ChunkFootprint;
+  chunks: ChunkFootprint[];
+  chunkIndex = 0
+
+  constructor(chunks: ChunkFootprint[], localStorageManager: LocalStorageManager) {
+    this.fromChunk = chunks[0]
+
+    const chunkNeighbors: ChunkFootprint[] = []
+    for (let c of chunks) {
+      const siblings = getSiblingLocations(c)
+      chunkNeighbors.push(...siblings)
+    }
+    chunks.push(...chunkNeighbors)
+
+    const chunkKeySet = new Set()
+    this.chunks = []
+
+    for (let c of chunks) {
+      const chunkKey = getChunkKey(c)
+      if (chunkKeySet.has(chunkKey)) continue;
+      chunkKeySet.add(chunkKey)
+
+      if (localStorageManager.getChunkById(chunkKey) == null) this.chunks.push(c)
+    }
+  }
+
+  nextChunk(chunk: ChunkFootprint): ChunkFootprint {
+    this.chunkIndex++
+    if (this.chunkIndex < this.chunks.length) return this.chunks[this.chunkIndex]
+
+    return this.fromChunk
+  }
+}
+
+export class TempPattern implements MiningPattern {
+  type: MiningPatternType = MiningPatternType.Temp;
+  fromChunk: ChunkFootprint;
+  chunks: ChunkFootprint[];
+  chunkIndex = 0
+
+  constructor(localStorageManager: LocalStorageManager) {
+    const exploredChunks = Array.from(localStorageManager.allChunks())
+      .sort((a, b) => (16 - a.perlin) * 16 - (16 - b.perlin) * 16)
+
+
+    const chunkNeighbors: ChunkFootprint[] = []
+    for (let c of exploredChunks) {
+      const siblings = getSiblingLocations(c.chunkFootprint)
+      chunkNeighbors.push(...siblings)
+    }
+
+    const chunkKeySet = new Set()
+    this.chunks = []
+
+    for (let c of chunkNeighbors) {
+      const chunkKey = getChunkKey(c)
+      if (chunkKeySet.has(chunkKey)) continue;
+      chunkKeySet.add(chunkKey)
+
+      if (localStorageManager.getChunkById(chunkKey) == null) this.chunks.push(c)
+    }
+
+    this.fromChunk = this.chunks[0]
+  }
+
+  nextChunk(chunk: ChunkFootprint): ChunkFootprint {
+    console.debug(getTemperature(chunk))
+    this.chunkIndex++
+    if (this.chunkIndex < this.chunks.length) return this.chunks[this.chunkIndex]
+
+    return this.fromChunk
   }
 }
