@@ -501,7 +501,8 @@ class ContractsAPI extends EventEmitter {
     snarkArgs: MoveSnarkArgs,
     shipsMoved: number,
     silverMoved: number,
-    actionId: string
+    actionId: string,
+    silence?: boolean
   ): Promise<providers.TransactionReceipt> {
     const terminalEmitter = TerminalEmitter.getInstance();
 
@@ -519,16 +520,18 @@ class ContractsAPI extends EventEmitter {
         (silverMoved * contractPrecision).toString(),
       ],
     ] as MoveArgs;
-    terminalEmitter.println(
-      'MOVE: calculated SNARK with args:',
-      TerminalTextStyle.Sub
-    );
-    terminalEmitter.println(
-      JSON.stringify(hexifyBigIntNestedArray(args.slice(0, 3))),
-      TerminalTextStyle.Sub,
-      true
-    );
-    terminalEmitter.newline();
+    if (!silence) {
+      terminalEmitter.println(
+        'MOVE: calculated SNARK with args:',
+        TerminalTextStyle.Sub
+      );
+      terminalEmitter.println(
+        JSON.stringify(hexifyBigIntNestedArray(args.slice(0, 3))),
+        TerminalTextStyle.Sub,
+        true
+      );
+      terminalEmitter.newline();
+    }
 
     const tx: providers.TransactionResponse = await this.txRequestExecutor.makeRequest(
       {

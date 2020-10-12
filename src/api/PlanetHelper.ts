@@ -44,7 +44,7 @@ const getCoordsString = (coords: WorldCoords): CoordsString => {
 };
 
 export class PlanetHelper {
-  private readonly planets: PlanetMap;
+  public readonly planets: PlanetMap;
   private readonly arrivals: VoyageMap;
   private readonly planetArrivalIds: PlanetVoyageIdMap;
   private readonly planetLocationMap: PlanetLocationMap;

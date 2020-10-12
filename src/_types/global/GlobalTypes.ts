@@ -113,7 +113,15 @@ export const enum UpgradeBranchName {
   Speed = 2,
 }
 
+export interface PlanetTempVal {
+  owner: EthAddress | null,
+  energy: number,
+  silver: number
+};
+
 export interface Planet {
+  tmp?: PlanetTempVal
+
   locationId: LocationId;
   perlin: number;
   spaceType: SpaceType;

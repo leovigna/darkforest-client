@@ -98,16 +98,19 @@ class SnarkArgsHelper {
     y2: number,
     p2: number,
     r: number,
-    distMax: number
+    distMax: number,
+    silence?: boolean
   ): Promise<MoveSnarkArgs> {
     try {
       const terminalEmitter = TerminalEmitter.getInstance();
 
       const start = Date.now();
-      terminalEmitter.println(
-        'MOVE: calculating witness and proof',
-        TerminalTextStyle.Sub
-      );
+      if (!silence) {
+        terminalEmitter.println(
+          'MOVE: calculating witness and proof',
+          TerminalTextStyle.Sub
+        );
+      }
       const input: MoveInfo = {
         x1: modPBigInt(x1).toString(),
         y1: modPBigInt(y1).toString(),
@@ -132,10 +135,12 @@ class SnarkArgsHelper {
         bigInt(distMax),
       ];
       const end = Date.now();
-      terminalEmitter.println(
-        `MOVE: calculated witness and proof in ${end - start}ms`,
-        TerminalTextStyle.Sub
-      );
+      if (!silence) {
+        terminalEmitter.println(
+          `MOVE: calculated witness and proof in ${end - start}ms`,
+          TerminalTextStyle.Sub
+        );
+      }
       const proofArgs = this.callArgsFromProofAndSignals(
         snarkProof.proof,
         publicSignals.map((x) => modPBigIntNative(x))

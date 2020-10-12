@@ -17,6 +17,7 @@ import {
   SpaceType,
   UpgradeBranchName,
   PlanetResource,
+  PlanetTempVal,
 } from '../_types/global/GlobalTypes';
 import LocalStorageManager from './LocalStorageManager';
 import { MIN_CHUNK_SIZE } from '../utils/constants';
@@ -66,6 +67,7 @@ import EthereumAccountManager from './EthereumAccountManager';
 import { getRandomActionId, hasOwner, moveShipsDecay } from '../utils/Utils';
 import NotificationManager from '../utils/NotificationManager';
 import { parseConfigFileTextToJson } from 'typescript';
+import { SilverCapTooltipPane } from '../app/GameWindowPanes/TooltipPanes';
 
 class GameManager extends EventEmitter implements AbstractGameManager {
   private readonly account: EthAddress | null;
@@ -95,6 +97,8 @@ class GameManager extends EventEmitter implements AbstractGameManager {
   }
 
   private readonly endTimeSeconds: number = 1609372800;
+
+  private planetTmp: Map<LocationId, PlanetTempVal>
 
   private constructor(
     account: EthAddress | null,
@@ -146,6 +150,8 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     }, 5000);
 
     this.hashRate = 0;
+
+    this.planetTmp = new Map<LocationId, PlanetTempVal>()
   }
 
   public destroy(): void {
@@ -834,7 +840,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
         newY,
         perlin({ x: newX, y: newY }),
         this.worldRadius,
-        distMax
+        distMax, true
       )
 
     return callArgs
@@ -847,8 +853,8 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     silver: number,
     callArgs: MoveSnarkArgs
   ) {
-    forces = Math.ceil(forces)
-    silver = Math.ceil(silver)
+    const terminalEmitter = TerminalEmitter.getInstance();
+    terminalEmitter.println(`(${forces}, ${silver}) ${from} => ${to}\n`)
 
     const oldLocation = this.planetHelper.getLocationOfPlanet(from);
     const newLocation = this.planetHelper.getLocationOfPlanet(to);
@@ -876,7 +882,8 @@ class GameManager extends EventEmitter implements AbstractGameManager {
         callArgs,
         forces,
         silver,
-        actionId
+        actionId,
+        true
       );
 
       this.emit(GameManagerEvent.Moved);
@@ -1123,22 +1130,29 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
     const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
       .filter((p) => p.owner != this.account)
+      .filter((p) => p.tmp?.owner != this.account)
       .filter((p) => p.planetLevel >= minLevel)
 
-    terminalEmitter.println(`Expanding territory for L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
-    terminalEmitter.println(`${targetPlanets.length} target planets for expansion\n`)
+    terminalEmitter.println(`Expanding from L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`Expanding to ${targetPlanets.length} target planets\n`)
 
-    let energy = planet.energy
-    let silver = planet.silver
+    this.setDefaultTempValues(planet)
+    if (!planet.tmp) throw new Error("planet.tmp is null");
+
     const moveExecuteArgs: [LocationId, LocationId, number, number, MoveSnarkArgs][] = []
     for (let targetPlanet of targetPlanets) {
-      if (energy > 0) {
+      this.setDefaultTempValues(targetPlanet)
+      if (!targetPlanet.tmp) throw new Error("targetPlanet.tmp is null");
+
+      if (planet.tmp.energy > 0) {
         const energySent = Math.ceil(this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, (targetPlanet.energy * targetPlanet.defense / 100) + 1))
-        const silverSent = Math.ceil(Math.min(silver, targetPlanet.silverCap))
-        if (energy >= energySent) {
-          energy -= energySent
-          silver -= silverSent
-          terminalEmitter.println(`Sent (${energySent}, ${silverSent} to ${targetPlanet.locationId}. ${energy}/${planet.energyCap}`)
+        const silverSent = Math.ceil(Math.min(planet.tmp.silver, targetPlanet.silverCap))
+        if (planet.tmp.energy >= energySent) {
+          targetPlanet.tmp.owner = this.account
+          targetPlanet.tmp.energy = 1
+          targetPlanet.tmp.silver = targetPlanet.tmp.silver ?? 0 + silverSent
+          planet.tmp.energy -= energySent
+          planet.tmp.silver -= silverSent
           const callArgs = await this.moveComputeArgs(planet.locationId, targetPlanet.locationId)
 
           if (!!callArgs) {
@@ -1146,7 +1160,9 @@ class GameManager extends EventEmitter implements AbstractGameManager {
           }
         }
       }
+      this.planetTmp.set(targetPlanet.locationId, targetPlanet.tmp)
     }
+    this.planetTmp.set(planet.locationId, planet.tmp)
 
     const moveExecutePromises = moveExecuteArgs.map((args) => this.moveExecute(...args))
     return moveExecutePromises
@@ -1166,7 +1182,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
       .filter((planet) => planet.planetLevel >= minLevel)
       .sort((a, b) => b.planetLevel - a.planetLevel)
 
-    terminalEmitter.println(`Expanding ${myPlanets.length} planets.\n`)
+    terminalEmitter.println(`Expanding ${myPlanets.length} planets\n`)
 
     let txListBatch: Promise<void>[] = []
     const batchSize = 50
@@ -1188,24 +1204,28 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
     const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
       .filter((p) => p.owner === this.account)
-      .filter((p) => p.planetLevel > planet.planetLevel)
-      .filter((p) => p.energy == p.energyCap)
+      .filter((p) => p.planetLevel < planet.planetLevel)
+      .sort((a, b) => b.planetLevel - a.planetLevel)
 
+    terminalEmitter.println(`Sinking to L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`Sinking from ${targetPlanets.length} target planets\n`)
 
-    terminalEmitter.println(`Sinking energy for L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
-    terminalEmitter.println(`${targetPlanets.length} target planets for energy sink\n`)
+    this.setDefaultTempValues(planet)
+    if (!planet.tmp) throw new Error("planet.tmp is null");
 
-    let energy = planet.energy
     const moveExecuteArgs: [LocationId, LocationId, number, number, MoveSnarkArgs][] = []
     for (let targetPlanet of targetPlanets) {
-      const energyDeficit = planet.energyCap - energy
+      this.setDefaultTempValues(targetPlanet)
+      if (!targetPlanet.tmp) throw new Error("targetPlanet.tmp is null");
+
+      const energyDeficit = planet.energyCap - planet.tmp.energy
       if (energyDeficit > 0) {
         const energyMaxSent = this.getEnergyNeededForMove(targetPlanet.locationId, planet.locationId, energyDeficit)
-        const energySent = Math.ceil(Math.min(targetPlanet.energy, energyMaxSent))
-        const arrivingEnergy = this.getEnergyArrivingForMove(targetPlanet.locationId, planet.locationId, energySent)
+        const energySent = Math.floor(Math.min(targetPlanet.tmp.energy * 0.90, energyMaxSent))
+        const arrivingEnergy = Math.floor(this.getEnergyArrivingForMove(targetPlanet.locationId, planet.locationId, energySent))
         if (arrivingEnergy > energySent * arrivalPercent / 100) {
-          energy += arrivingEnergy
-          terminalEmitter.println(`Receiving ${arrivingEnergy} energy from ${targetPlanet.locationId}. ${energy}/${planet.energyCap}`)
+          planet.tmp.energy += arrivingEnergy
+          targetPlanet.tmp.energy -= energySent
           const callArgs = await this.moveComputeArgs(targetPlanet.locationId, planet.locationId)
 
           if (!!callArgs) {
@@ -1213,7 +1233,9 @@ class GameManager extends EventEmitter implements AbstractGameManager {
           }
         }
       }
+      this.planetTmp.set(targetPlanet.locationId, targetPlanet.tmp)
     }
+    this.planetTmp.set(planet.locationId, planet.tmp)
 
     const moveExecutePromises = moveExecuteArgs.map((args) => this.moveExecute(...args))
     return moveExecutePromises
@@ -1234,7 +1256,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
       .filter((planet) => planet.planetLevel >= minLevel)
       .sort((a, b) => b.planetLevel - a.planetLevel)
 
-    terminalEmitter.println(`Expanding ${myPlanets.length} planets.\n`)
+    terminalEmitter.println(`Sinking ${myPlanets.length} planets.\n`)
 
     let txListBatch: Promise<void>[] = []
     const batchSize = 50
@@ -1257,11 +1279,11 @@ class GameManager extends EventEmitter implements AbstractGameManager {
       .sort((a, b) => b.planetLevel - a.planetLevel)
 
     const planets = myPlanets.filter(p => this.planetHelper.planetCanUpgrade(p))
-    terminalEmitter.println(`Upgrade checking ${myPlanets.length} planets...${planets.length === 0 ? ' no luck\n' : '\n'}`)
+    terminalEmitter.println(`Upgrading  ${myPlanets.length} planets\n`)
 
     let txListBatch: Promise<void>[] = []
     const batchSize = 50
-    for (let planet of myPlanets) {
+    for (let planet of planets) {
       terminalEmitter.println(`Upgrading L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
       let tx;
       for (let branch of branchList) {
@@ -1282,38 +1304,48 @@ class GameManager extends EventEmitter implements AbstractGameManager {
   }
 
   // Silver management
-  async allocateSilver(silverPlanet: Planet, rangePercent: number, minLevel: number): Promise<Promise<void>[]> {
+  async allocateSilver(planet: Planet, rangePercent: number, minLevel: number): Promise<Promise<void>[]> {
     const terminalEmitter = TerminalEmitter.getInstance();
 
-    const targetPlanets = this.getPlanetsInRange(silverPlanet.locationId, rangePercent)
-      .filter((planet) => planet.owner === this.account)
-      .filter((planet) => planet.planetResource != PlanetResource.SILVER)
-      .filter((planet) => planet.planetLevel >= minLevel)
-      .filter((planet) => planet.silver < planet.silverCap)
+    const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
+      .filter((p) => p.owner === this.account)
+      .filter((p) => p.planetResource != PlanetResource.SILVER)
+      .filter((p) => p.planetLevel >= minLevel)
+      .filter((p) => p.silver < planet.silverCap)
+      .filter((p) => p.tmp?.silver ?? 0 < p.silverCap)
 
-    terminalEmitter.println(`Allocating silver for L${silverPlanet.planetLevel} ${silverPlanet.locationId} with ${silverPlanet.silver}/${silverPlanet.silverCap} silver\n`, TerminalTextStyle.Green)
-    terminalEmitter.println(`${targetPlanets.length} target planets for silver allocation\n`)
+    terminalEmitter.println(`Allocating silver for L${planet.planetLevel} ${planet.locationId}\n`, TerminalTextStyle.Green)
+    terminalEmitter.println(`Allocating silver to ${targetPlanets.length} target planets\n`)
 
-    let silver = silverPlanet.silver
-    let energy = silverPlanet.energy
+    this.setDefaultTempValues(planet)
+    if (!planet.tmp) throw new Error("planet.tmp is null");
+
     const moveExecuteArgs: [LocationId, LocationId, number, number, MoveSnarkArgs][] = []
     for (let targetPlanet of targetPlanets) {
-      if (silver > 0 && energy > 0) {
-        const silverDeficit = targetPlanet.silverCap - targetPlanet.silver
-        const silverSent = Math.min(silver, silverDeficit)
-        const energySent = this.getEnergyNeededForMove(silverPlanet.locationId, targetPlanet.locationId, 1) * 1.1
-        if (energy >= energySent && silverSent > 0) {
-          silver -= silverSent
-          energy -= energySent
-          terminalEmitter.println(`${silverSent} silver sent to ${targetPlanet.locationId} for ${energySent} energy. ${silver}/${silverDeficit}`, TerminalTextStyle.Green)
-          const callArgs = await this.moveComputeArgs(silverPlanet.locationId, targetPlanet.locationId)
+      this.setDefaultTempValues(targetPlanet)
+      if (!targetPlanet.tmp) throw new Error("targetPlanet.tmp is null");
+
+      if (planet.tmp.silver > 0 && planet.tmp.energy > 0) {
+        const silverDeficit = targetPlanet.silverCap - targetPlanet.tmp.silver
+        const silverSent = Math.min(planet.tmp.silver, silverDeficit)
+        const energySent = this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, 1) * 1.1
+        if (planet.tmp.energy >= energySent && silverSent > 0) {
+          planet.tmp.silver -= silverSent
+          planet.tmp.energy -= energySent
+          targetPlanet.tmp.silver += silverSent
+
+          const callArgs = await this.moveComputeArgs(planet.locationId, targetPlanet.locationId)
 
           if (!!callArgs) {
-            moveExecuteArgs.push([silverPlanet.locationId, targetPlanet.locationId, energySent, silverSent, callArgs])
+            moveExecuteArgs.push([planet.locationId, targetPlanet.locationId, energySent, silverSent, callArgs])
           }
         }
       }
+      console.debug(targetPlanet)
+      this.planetTmp.set(targetPlanet.locationId, targetPlanet.tmp)
     }
+    console.debug(planet)
+    this.planetTmp.set(planet.locationId, planet.tmp)
 
     const moveExecutePromises = moveExecuteArgs.map((args) => this.moveExecute(...args))
     return moveExecutePromises
@@ -1349,7 +1381,34 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     await Promise.all(txListBatch)
   }
 
+  //Temp Values
+  refreshTempValues(planet: Planet) {
+    planet.tmp = {
+      energy: planet.energy,
+      silver: planet.silver,
+      owner: planet.owner
+    }
+    this.planetTmp.set(planet.locationId, planet.tmp)
+  }
+
+  setDefaultTempValues(planet: Planet) {
+    const savedTmp = this.planetTmp.get(planet.locationId)
+    planet.tmp = {
+      energy: savedTmp?.energy ?? planet.energy,
+      silver: savedTmp?.silver ?? planet.silver,
+      owner: savedTmp?.owner ?? planet.owner
+    }
+    this.planetTmp.set(planet.locationId, planet.tmp)
+  }
+
+  clearTempValues() {
+    for (let [locationId, planet] of this.planetHelper.planets) {
+      this.refreshTempValues(planet)
+    }
+  }
+
   async automateAll() {
+    this.clearTempValues()
     while (true) {
       await this.upgradeAsyncAll([0, 1, 2], 4) //Defence, Range, Speed
       await this.allocateSilverAll(50, 3, 1)
