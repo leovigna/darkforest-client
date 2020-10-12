@@ -17,7 +17,7 @@ import {
   SpaceType,
   UpgradeBranchName,
   PlanetResource,
-  PlanetTempVal,
+  PlanetTempVal
 } from '../_types/global/GlobalTypes';
 import LocalStorageManager from './LocalStorageManager';
 import { MIN_CHUNK_SIZE } from '../utils/constants';
@@ -1146,7 +1146,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
       if (planet.tmp.energy > 0) {
         const energySent = Math.ceil(this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, (targetPlanet.energy * targetPlanet.defense / 100) + 1))
-        const silverSent = Math.ceil(Math.min(planet.tmp.silver, targetPlanet.silverCap))
+        const silverSent = Math.min(Math.floor(planet.tmp.silver), Math.ceil(targetPlanet.silverCap))
         if (planet.tmp.energy >= energySent) {
           targetPlanet.tmp.owner = this.account
           targetPlanet.tmp.energy = 1
@@ -1204,6 +1204,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
     const targetPlanets = this.getPlanetsInRange(planet.locationId, rangePercent)
       .filter((p) => p.owner === this.account)
+      .filter((p) => p.planetResource == PlanetResource.NONE) //Don't sink silver mines
       .filter((p) => p.planetLevel < planet.planetLevel)
       .sort((a, b) => b.planetLevel - a.planetLevel)
 
@@ -1221,7 +1222,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
       const energyDeficit = planet.energyCap - planet.tmp.energy
       if (energyDeficit > 0) {
         const energyMaxSent = this.getEnergyNeededForMove(targetPlanet.locationId, planet.locationId, energyDeficit)
-        const energySent = Math.floor(Math.min(targetPlanet.tmp.energy * 0.90, energyMaxSent))
+        const energySent = Math.min(Math.floor(targetPlanet.tmp.energy * 0.90), Math.ceil(energyMaxSent))
         const arrivingEnergy = Math.floor(this.getEnergyArrivingForMove(targetPlanet.locationId, planet.locationId, energySent))
         if (arrivingEnergy > energySent * arrivalPercent / 100) {
           planet.tmp.energy += arrivingEnergy
@@ -1250,11 +1251,12 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     await Promise.all(txList)
   }
 
-  async sinkEnergyAll(rangePercent: number, minLevel: number, arrivalPercent: number) {
+  async sinkEnergyAll(rangePercent: number, minLevel: number, arrivalPercent: number, onlySilver?: boolean) {
     const terminalEmitter = TerminalEmitter.getInstance();
-    const myPlanets = this.getMyPlanets()
-      .filter((planet) => planet.planetLevel >= minLevel)
+    let myPlanets = this.getMyPlanets()
+      .filter((p) => p.planetLevel >= minLevel)
       .sort((a, b) => b.planetLevel - a.planetLevel)
+    if (onlySilver) myPlanets.filter((p) => p.planetResource == PlanetResource.SILVER)
 
     terminalEmitter.println(`Sinking ${myPlanets.length} planets.\n`)
 
@@ -1327,8 +1329,8 @@ class GameManager extends EventEmitter implements AbstractGameManager {
 
       if (planet.tmp.silver > 0 && planet.tmp.energy > 0) {
         const silverDeficit = targetPlanet.silverCap - targetPlanet.tmp.silver
-        const silverSent = Math.min(planet.tmp.silver, silverDeficit)
-        const energySent = this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, 1) * 1.1
+        const silverSent = Math.min(Math.floor(planet.tmp.silver), Math.ceil(silverDeficit))
+        const energySent = Math.ceil(this.getEnergyNeededForMove(planet.locationId, targetPlanet.locationId, 1) * 1.1)
         if (planet.tmp.energy >= energySent && silverSent > 0) {
           planet.tmp.silver -= silverSent
           planet.tmp.energy -= energySent
@@ -1410,8 +1412,9 @@ class GameManager extends EventEmitter implements AbstractGameManager {
   async automateAll() {
     this.clearTempValues()
     while (true) {
-      await this.upgradeAsyncAll([0, 1, 2], 4) //Defence, Range, Speed
+      await this.upgradeAsyncAll([0, 1, 2], 3) //Defence, Range, Speed
       await this.allocateSilverAll(50, 3, 1)
+      await this.sinkEnergyAll(50, 3, 25)
       await this.expandAll(50, 3, 1)
     }
   }
