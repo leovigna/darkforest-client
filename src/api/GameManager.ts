@@ -31,7 +31,7 @@ import SnarkHelper from './SnarkArgsHelper';
 import { WorldCoords } from '../utils/Coordinates';
 import _ from 'lodash';
 
-import { SpiralPattern, MiningPattern, CheesePattern, TempPattern } from '../utils/MiningPatterns';
+import { SpiralPattern, MiningPattern, CheesePattern, TempPattern, SpiralThresholdPattern } from '../utils/MiningPatterns';
 import AbstractGameManager from './AbstractGameManager';
 import {
   ContractConstants,
@@ -1414,14 +1414,17 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     while (true) {
       await this.upgradeAsyncAll([0, 1, 2], 3) //Defence, Range, Speed
       await this.allocateSilverAll(50, 3, 1)
-      await this.sinkEnergyAll(50, 3, 25)
+      //await this.sinkEnergyAll(50, 3, 25)
       await this.expandAll(50, 3, 1)
     }
   }
 
   // Mining
-  setMiningSpiralPattern(center: WorldCoords, chunkSize: number): void {
-    const pattern = new SpiralPattern(center, chunkSize)
+  setMiningSpiralPattern(center: WorldCoords, chunkSize: number, threshold?: number): void {
+    let pattern;
+    if (!threshold) pattern = new SpiralPattern(center, chunkSize)
+    else pattern = new SpiralThresholdPattern(center, chunkSize, threshold)
+
     if (this.minerManager) {
       this.minerManager.setMiningPattern(pattern);
     }
