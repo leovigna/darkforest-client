@@ -164,7 +164,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     clearInterval(this.balanceInterval);
   }
 
-  static async create(): Promise<GameManager> {
+  static async create(fromCache: boolean): Promise<GameManager> {
     // initialize dependencies according to a DAG
 
     // first we initialize the ContractsAPI and get the user's eth account, and load contract constants + state
@@ -191,7 +191,7 @@ class GameManager extends EventEmitter implements AbstractGameManager {
     const allArrivals = await contractsAPI.getAllArrivals();
     // fetch planets after allArrivals, since an arrival to a new planet might be sent
     // while we are fetching
-    const planets = await contractsAPI.getPlanets(localStorageManager);
+    const planets = await contractsAPI.getPlanets(localStorageManager, fromCache);
     planets.forEach((planet, locId) => {
       if (planets.has(locId)) {
         planetVoyageIdMap[locId] = [];

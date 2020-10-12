@@ -609,7 +609,24 @@ export default function GameLandingPage(_props: { replayMode: boolean }) {
       'Downloading data from Ethereum blockchain... (the contract is very big. this may take a while)'
     );
 
-    const newGameManager: AbstractGameManager = await GameManager.create();
+    terminalEmitter.println(
+      'Use indexedDB state cache? This will be faster but may load stale data.'
+    );
+    terminalEmitter.println(`(y) Use state cache.`);
+    terminalEmitter.println(`(n) Refresh data.`);
+    terminalEmitter.println(`Select an option.`, TerminalTextStyle.White);
+    let fromCache;
+
+    const userInput = await getUserInput();
+    if (userInput === 'y') {
+      fromCache = true
+    } else if (userInput === 'n') {
+      fromCache = false
+    } else {
+      terminalEmitter.println('Unrecognized input. Please try again.');
+    }
+
+    const newGameManager: AbstractGameManager = await GameManager.create(fromCache);
     window.df = newGameManager;
     const newGameUIManager = GameUIManager.create(newGameManager);
     window.uiManager = newGameUIManager;

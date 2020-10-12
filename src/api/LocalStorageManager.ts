@@ -86,6 +86,15 @@ class LocalStorageManager implements ChunkStore {
           db.createObjectStore(ObjectStore.BOARD);
           db.createObjectStore(ObjectStore.UNCONFIRMED_ETH_TXS);
         } else if (db.version == 2) {
+          if (!db.objectStoreNames.contains(ObjectStore.DEFAULT)) {
+            db.createObjectStore(ObjectStore.DEFAULT);
+          }
+          if (!db.objectStoreNames.contains(ObjectStore.BOARD)) {
+            db.createObjectStore(ObjectStore.BOARD);
+          }
+          if (!db.objectStoreNames.contains(ObjectStore.UNCONFIRMED_ETH_TXS)) {
+            db.createObjectStore(ObjectStore.UNCONFIRMED_ETH_TXS);
+          }
           db.createObjectStore(ObjectStore.PLANETS)
         }
       },

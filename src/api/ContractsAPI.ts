@@ -756,7 +756,7 @@ class ContractsAPI extends EventEmitter {
     return _.flatten(arrivalsUnflattened);
   }
 
-  async getPlanets(localStorageManager: LocalStorageManager): Promise<PlanetMap> {
+  async getPlanets(localStorageManager: LocalStorageManager, fetchCache: boolean): Promise<PlanetMap> {
     console.log('getting planets');
     const contract = this.coreContract;
     const terminalEmitter = TerminalEmitter.getInstance();
@@ -773,10 +773,9 @@ class ContractsAPI extends EventEmitter {
     const planetLocationIds: LocationId[] = planetIds.map((p) => locationIdFromDecStr(p.toString()))
     const cacheMap = await this.getPlanetMapCache(planetLocationIds, localStorageManager)
     terminalEmitter.println(`Cache has ${cacheMap.size}/${nPlanets} planets...`);
-    const fetchCache = true
-    if (cacheMap.size >= nPlanets - 1000 && fetchCache) {
+    if (fetchCache) {
       terminalEmitter.println('(5/6) Loading planet data from cache..');
-      terminalEmitter.println('(6/6) Fetching player owned planet data...');
+      terminalEmitter.println('(6/6) Refreshing player owned planet data...');
 
       const ownedPlanetsPromise: Promise<Planet>[] = []
 
