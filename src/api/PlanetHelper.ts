@@ -13,6 +13,7 @@ import {
   PlanetResource,
   SpaceType,
   EthAddress,
+  UpgradeBranchName,
 } from '../_types/global/GlobalTypes';
 import {
   ContractConstants,
@@ -354,7 +355,7 @@ export class PlanetHelper {
       if (
         toPlanet.energy >
         Math.floor((shipsMoved * contractPrecision * 100) / toPlanet.defense) /
-          contractPrecision
+        contractPrecision
       ) {
         // attack reduces target planet's garrison but doesn't conquer it
         toPlanet.energy -=
@@ -369,7 +370,7 @@ export class PlanetHelper {
           Math.floor(
             (toPlanet.energy * contractPrecision * toPlanet.defense) / 100
           ) /
-            contractPrecision;
+          contractPrecision;
         this.updateScore(toPlanet.locationId);
       }
     } else {
@@ -513,11 +514,25 @@ export class PlanetHelper {
     return (totalLevel + 1) * 0.2 * planet.silverCap;
   }
 
-  private planetCanUpgrade(planet: Planet): boolean {
+  planetCanUpgrade(planet: Planet): boolean {
     const totalRank = planet.upgradeState.reduce((a, b) => a + b);
     if (planet.spaceType === SpaceType.NEBULA && totalRank >= 3) return false;
     if (planet.spaceType === SpaceType.SPACE && totalRank >= 4) return false;
     if (planet.spaceType === SpaceType.DEEP_SPACE && totalRank >= 5)
+      return false;
+    return (
+      planet.planetLevel !== 0 &&
+      planet.planetResource !== PlanetResource.SILVER &&
+      planet.silver >= this.getSilverNeeded(planet)
+    );
+  }
+
+  planetCanUpgradeBranch(planet: Planet, branch: UpgradeBranchName): boolean {
+    const branchRank = planet.upgradeState[branch]
+    const totalRank = planet.upgradeState.reduce((a, b) => a + b);
+    if (planet.spaceType === SpaceType.NEBULA && (totalRank >= 3 || branchRank >= 3)) return false;
+    if (planet.spaceType === SpaceType.SPACE && (totalRank >= 4 || branchRank >= 4)) return false;
+    if (planet.spaceType === SpaceType.DEEP_SPACE && (totalRank >= 5 || branchRank >= 4))
       return false;
     return (
       planet.planetLevel !== 0 &&
@@ -687,7 +702,7 @@ export class PlanetHelper {
     const timeElapsed = atTimeMillis / 1000 - planet.lastUpdated;
     const denominator =
       Math.exp((-4 * planet.energyGrowth * timeElapsed) / planet.energyCap) *
-        (planet.energyCap / planet.energy - 1) +
+      (planet.energyCap / planet.energy - 1) +
       1;
     return planet.energyCap / denominator;
   }

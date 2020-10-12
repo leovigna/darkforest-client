@@ -66,7 +66,7 @@ import EthereumAccountManager from './EthereumAccountManager';
 import NotificationManager from '../utils/NotificationManager';
 import { BLOCK_EXPLORER_URL } from '../utils/constants';
 import bigInt from 'big-integer';
-import LocalStorageManager, { ObjectStore } from './LocalStorageManager';
+import LocalStorageManager, { DBActionAny, DBActionType, ObjectStore } from './LocalStorageManager';
 import { collapseTextChangeRangesAcrossMultipleVersions } from 'typescript';
 
 export function isUnconfirmedInit(tx: UnconfirmedTx): tx is UnconfirmedInit {
@@ -773,7 +773,8 @@ class ContractsAPI extends EventEmitter {
     const planetLocationIds: LocationId[] = planetIds.map((p) => locationIdFromDecStr(p.toString()))
     const cacheMap = await this.getPlanetMapCache(planetLocationIds, localStorageManager)
     terminalEmitter.println(`Cache has ${cacheMap.size}/${nPlanets} planets...`);
-    if (cacheMap.size >= nPlanets - 1000) {
+    const fetchCache = true
+    if (cacheMap.size >= nPlanets - 1000 && fetchCache) {
       terminalEmitter.println('(5/6) Loading planet data from cache..');
       terminalEmitter.println('(6/6) Fetching player owned planet data...');
 
@@ -829,9 +830,17 @@ class ContractsAPI extends EventEmitter {
   }
 
   async setPlanetMapCache(planetMap: PlanetMap, localStorageManager: LocalStorageManager) {
+    const actions: DBActionAny[] = []
+
     for (let [locationId, planet] of planetMap) {
-      await localStorageManager.setValueForKey(locationId.toString(), planet, ObjectStore.PLANETS)
+      actions.push({
+        type: DBActionType.UPDATE,
+        key: locationId.toString(),
+        value: planet
+      })
     }
+
+    await localStorageManager.bulkActions(actions, ObjectStore.PLANETS)
   }
 
   async getPlanetMapCache(locationIds: LocationId[], localStorageManager: LocalStorageManager): Promise<PlanetMap> {

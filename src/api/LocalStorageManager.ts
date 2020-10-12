@@ -33,7 +33,7 @@ export enum ObjectStore {
   PLANETS = 'planets'
 }
 
-enum DBActionType {
+export enum DBActionType {
   UPDATE,
   DELETE,
   READ
@@ -45,7 +45,7 @@ interface DBAction {
   dbValue?: ExploredChunkData;
 }
 
-interface DBActionAny {
+export interface DBActionAny {
   type: DBActionType;
   key: string;
   value?: any;
